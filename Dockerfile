@@ -1,8 +1,9 @@
 # Stage 1: 下载 uv 二进制文件
-FROM alpine:latest AS uv-downloader
+FROM debian:bookworm-slim AS uv-downloader
 
-RUN apk add --no-cache curl && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    rm -rf /var/lib/apt/lists/*
 
 # Stage 2: 最终镜像（n8n 基于 Debian）
 FROM docker.n8n.io/n8nio/n8n:latest
