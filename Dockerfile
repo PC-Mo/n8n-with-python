@@ -4,19 +4,20 @@ FROM alpine:latest AS uv-downloader
 RUN apk add --no-cache curl && \
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Stage 2: 最终镜像
+# Stage 2: 最终镜像（n8n 基于 Debian）
 FROM docker.n8n.io/n8nio/n8n:latest
 
 USER root
 
-# 安装 Python 及常用编译依赖（用于 pip install 编译 C 扩展）
-RUN apk add --no-cache \
+# 安装 Python 及编译依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    py3-pip \
+    python3-pip \
+    python3-venv \
     python3-dev \
     gcc \
-    musl-dev \
-    libffi-dev
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # 从第一阶段复制 uv
 COPY --from=uv-downloader /root/.local/bin/uv /usr/local/bin/uv
