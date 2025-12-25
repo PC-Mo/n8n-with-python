@@ -1,17 +1,15 @@
-# 多阶段构建：n8n + Python + pip + uv
-# Stage 1: 安装 Python 和 uv
-FROM python:3.11-slim AS python-builder
+# Stage 1: 下载 uv 二进制文件
+FROM alpine:latest AS uv-downloader
 
-# 安装 uv（快速 Python 包管理器）
-RUN pip install --no-cache-dir uv
+RUN apk add --no-cache curl && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Stage 2: 最终镜像基于官方 n8n
+# Stage 2: 最终镜像
 FROM docker.n8n.io/n8nio/n8n:latest
 
-# 切换到 root 用户安装软件
 USER root
 
-# 安装 Python 运行时依赖
+# 安装 Python 及常用编译依赖（用于 pip install 编译 C 扩展）
 RUN apk add --no-cache \
     python3 \
     py3-pip \
@@ -20,25 +18,19 @@ RUN apk add --no-cache \
     musl-dev \
     libffi-dev
 
-# 从 python-builder 复制 uv
-COPY --from=python-builder /usr/local/bin/uv /usr/local/bin/uv
-COPY --from=python-builder /usr/local/lib/python3.11/site-packages/uv* /usr/local/lib/python3.11/site-packages/
+# 从第一阶段复制 uv
+COPY --from=uv-downloader /root/.local/bin/uv /usr/local/bin/uv
+COPY --from=uv-downloader /root/.local/bin/uvx /usr/local/bin/uvx
 
-# 创建 Python 虚拟环境目录
+# 设置目录权限
 RUN mkdir -p /home/node/.local && \
     chown -R node:node /home/node/.local
 
-# 设置环境变量
 ENV PYTHONUNBUFFERED=1 \
     PATH="/home/node/.local/bin:$PATH"
 
 # 验证安装
-RUN python3 --version && \
-    pip3 --version && \
-    uv --version || echo "uv installation needs adjustment"
+RUN python3 --version && pip3 --version && uv --version
 
-# 切换回 node 用户
 USER node
-
-# 设置工作目录
 WORKDIR /home/node
