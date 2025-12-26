@@ -1,38 +1,48 @@
-# Stage 1: 下载 uv 二进制文件
-FROM debian:bookworm-slim AS uv-downloader
+# =====================================
+# 统一使用 Alpine 平台
+# =====================================
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    rm -rf /var/lib/apt/lists/*
+# 阶段 1: 准备 Python（Alpine 3.23 匹配 n8n 基础版本）
+FROM alpine:3.23 AS python-layer
+RUN apk add --no-cache \
+    python3 \
+    py3-pip
 
-# Stage 2: 最终镜像（n8n 基于 Debian）
+# 阶段 2: 准备 uv
+FROM alpine:3.23 AS uv-layer
+RUN apk add --no-cache curl && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 阶段 3: 基于 n8n 官方镜像
 FROM docker.n8n.io/n8nio/n8n:latest
 
 USER root
 
-# 安装 Python 及编译依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+# 复制 Python 完整环境（包括标准库）
+COPY --from=python-layer /usr/bin/python3* /usr/bin/
+COPY --from=python-layer /usr/bin/pip3* /usr/bin/
+COPY --from=python-layer /usr/lib/python3.12 /usr/lib/python3.12
+COPY --from=python-layer /usr/lib/libpython3.12.so* /usr/lib/
 
-# 从第一阶段复制 uv
-COPY --from=uv-downloader /root/.local/bin/uv /usr/local/bin/uv
-COPY --from=uv-downloader /root/.local/bin/uvx /usr/local/bin/uvx
+# 复制 uv
+COPY --from=uv-layer /root/.local/bin/uv /usr/local/bin/uv
+COPY --from=uv-layer /root/.local/bin/uvx /usr/local/bin/uvx
 
-# 设置目录权限
-RUN mkdir -p /home/node/.local && \
-    chown -R node:node /home/node/.local
-
-ENV PYTHONUNBUFFERED=1 \
-    PATH="/home/node/.local/bin:$PATH"
+# 创建符号链接
+RUN ln -sf /usr/bin/python3 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
 
 # 验证安装
-RUN python3 --version && pip3 --version && uv --version
+RUN node --version && \
+    npm --version && \
+    python3 --version && \
+    pip3 --version && \
+    uv --version
 
 USER node
 WORKDIR /home/node
+
+EXPOSE 5678
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:5678/healthz', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
