@@ -186,8 +186,6 @@ docker start n8n
 - ✅ 添加了健康检查
 - ✅ 优化了构建层
 
-详细优化信息请查看 [OPTIMIZATION_SUMMARY.md](./OPTIMIZATION_SUMMARY.md)
-
 ## 🔗 相关链接
 
 - [n8n 官方文档](https://docs.n8n.io/)
