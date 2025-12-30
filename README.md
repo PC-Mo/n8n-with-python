@@ -1,196 +1,106 @@
-# n8n-with-python
+# Custom Docker Images
 
-一个集成了 Python 和 uv 包管理器的 n8n Docker 镜像。
+自动构建和维护的 Docker 镜像集合，当基础镜像或依赖更新时自动重新构建。
 
-## 📦 包含内容
+## 📦 镜像列表
 
-- **n8n** 2.1.4 - 工作流自动化工具
-- **Node.js** v22.21.1 - JavaScript 运行时
-- **npm** 11.6.4 - Node 包管理器
-- **Python** 3.12.12 - Python 运行时
-- **pip** 25.1.1 - Python 包管理器
-- **uv** 0.9.18 - 快速 Python 包管理器
+| 镜像名 | 基础镜像 | 说明 |
+|--------|----------|------|
+| `pptag/n8n-python` | `docker.n8n.io/n8nio/n8n:latest` | 集成 Python 和 uv 的 n8n |
+| `pptag/caddy-tencentcloud` | `caddy:alpine` | 集成腾讯云 DNS 插件的 Caddy |
+| `pptag/whistle` | `node:20-alpine` | Web 调试代理工具 |
 
-## 🚀 快速开始
+## 🚀 快速使用
 
-### 构建镜像
+### n8n-python
 
-```bash
-docker build -t n8n-with-python .
-```
-
-### 运行容器
+集成了 Python 3.12、pip、uv 包管理器的 n8n 镜像。
 
 ```bash
-# 基本运行
-docker run -d -p 5678:5678 n8n-with-python
-
-# 带数据持久化
 docker run -d -p 5678:5678 \
   -v n8n_data:/home/node/.n8n \
   --name n8n \
-  n8n-with-python
-
-# 完整配置
-docker run -d -p 5678:5678 \
-  -v n8n_data:/home/node/.n8n \
-  -e N8N_BASIC_AUTH_ACTIVE=true \
-  -e N8N_BASIC_AUTH_USER=admin \
-  -e N8N_BASIC_AUTH_PASSWORD=your_password \
-  -e WEBHOOK_URL=https://your-domain.com \
-  --name n8n \
-  --restart unless-stopped \
-  n8n-with-python
+  pptag/n8n-python
 ```
 
-### 访问 n8n
+**包含内容：**
+- n8n - 工作流自动化工具
+- Python 3.12 + pip
+- uv - 快速 Python 包管理器
 
-打开浏览器访问: `http://localhost:5678`
+### caddy-tencentcloud
 
-## 🔧 使用示例
-
-### 在 n8n 中使用 Python
-
-```python
-# 在 n8n 的 Python 节点中
-import requests
-
-response = requests.get('https://api.example.com/data')
-return response.json()
-```
-
-### 使用 uv 安装 Python 包
+集成腾讯云 DNS 插件的 Caddy 服务器，支持自动 HTTPS 证书申请。
 
 ```bash
-# 进入容器
-docker exec -it n8n /bin/bash
-
-# 使用 uv 安装包
-uv pip install pandas numpy
-
-# 或使用传统 pip
-pip3 install pandas numpy
+docker run -d -p 80:80 -p 443:443 \
+  -v caddy_data:/data \
+  -v /path/to/Caddyfile:/etc/caddy/Caddyfile \
+  pptag/caddy-tencentcloud
 ```
 
-### 使用 npm 安装 Node 包
+**包含插件：**
+- `caddy-dns/tencentcloud` - 腾讯云 DNS 验证
+- `mholt/caddy-ratelimit` - 速率限制
+- `mholt/caddy-events-exec` - 事件执行
+
+### whistle
+
+Web 调试代理工具，支持抓包、Mock、重写等功能。
 
 ```bash
-# 进入容器
-docker exec -it n8n /bin/bash
-
-# 安装全局包
-npm install -g some-package
-
-# 在工作目录安装
-npm install package-name
+docker run -d -p 8899:8899 \
+  --name whistle \
+  pptag/whistle
 ```
 
-## 📊 镜像信息
+**包含插件：**
+- `whistle.inspect` - 增强调试功能
 
-- **基础镜像**: Alpine Linux 3.23 (统一平台)
-- **镜像大小**: 1.16GB
-- **架构**: linux/arm64 (支持 Apple Silicon)
+## 🔄 自动更新机制
 
-## 🔒 环境变量
+- 每天 UTC 02:00 自动检查基础镜像更新
+- 检测到更新时自动构建并推送新版本
+- whistle 镜像额外监控 npm 包版本更新
+- 支持手动触发构建
 
-常用 n8n 环境变量：
+## 📁 项目结构
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `N8N_BASIC_AUTH_ACTIVE` | 启用基本认证 | `false` |
-| `N8N_BASIC_AUTH_USER` | 认证用户名 | - |
-| `N8N_BASIC_AUTH_PASSWORD` | 认证密码 | - |
-| `WEBHOOK_URL` | Webhook URL | - |
-| `N8N_PORT` | n8n 端口 | `5678` |
-| `NODE_ENV` | Node 环境 | `production` |
-
-完整的环境变量列表请查看 [n8n 官方文档](https://docs.n8n.io/hosting/configuration/environment-variables/)
-
-## 🐳 Docker Compose
-
-创建 `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  n8n:
-    image: n8n-with-python:latest
-    container_name: n8n
-    restart: unless-stopped
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=your_secure_password
-      - WEBHOOK_URL=https://your-domain.com
-    volumes:
-      - n8n_data:/home/node/.n8n
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5678/healthz', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})\""]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-volumes:
-  n8n_data:
+```
+.
+├── images/
+│   ├── images.json              # 镜像配置
+│   ├── n8n-python/
+│   │   ├── Dockerfile
+│   │   └── node-packages.txt
+│   ├── caddy-tencentcloud/
+│   │   └── Dockerfile
+│   └── whistle/
+│       └── Dockerfile
+├── .digests/                    # 基础镜像 digest 记录
+└── .github/workflows/
+    └── build-and-push.yml       # 自动构建 workflow
 ```
 
-启动：
+## 🛠️ 添加新镜像
 
-```bash
-docker-compose up -d
+1. 在 `images/` 下创建新目录和 Dockerfile
+2. 在 `images/images.json` 中添加配置：
+
+```json
+{
+  "name": "your-image",
+  "context": "images/your-image",
+  "dockerfile": "Dockerfile",
+  "image": "pptag/your-image",
+  "base_image": "base:tag",
+  "digest_file": ".digests/your-image",
+  "platforms": "linux/amd64,linux/arm64",
+  "paths": ["images/your-image/**"]
+}
 ```
 
-## 🛠️ 故障排除
-
-### 检查容器日志
-
-```bash
-docker logs n8n
-```
-
-### 进入容器调试
-
-```bash
-docker exec -it n8n /bin/bash
-```
-
-### 验证所有工具
-
-```bash
-docker exec n8n /bin/sh -c "node --version && npm --version && python3 --version && pip3 --version && uv --version && n8n --version"
-```
-
-### 重置 n8n 数据
-
-```bash
-# 停止容器
-docker stop n8n
-
-# 删除数据卷
-docker volume rm n8n_data
-
-# 重新启动
-docker start n8n
-```
-
-## 📝 优化说明
-
-此镜像已经过优化：
-- ✅ 删除了文档和 markdown 文件
-- ✅ 删除了 source map 文件
-- ✅ 删除了测试文件和示例代码
-- ✅ 添加了健康检查
-- ✅ 优化了构建层
-
-## 🔗 相关链接
-
-- [n8n 官方文档](https://docs.n8n.io/)
-- [n8n GitHub](https://github.com/n8n-io/n8n)
-- [uv 文档](https://github.com/astral-sh/uv)
+3. 创建空的 digest 文件：`touch .digests/your-image`
 
 ## 📄 许可证
 
