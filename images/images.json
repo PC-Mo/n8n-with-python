@@ -1,0 +1,39 @@
+[
+  {
+    "name": "n8n-python",
+    "context": "images/n8n-python",
+    "dockerfile": "Dockerfile",
+    "image": "pptag/n8n-python",
+    "base_image": "docker.n8n.io/n8nio/n8n:latest",
+    "digest_file": ".digests/n8n-python",
+    "platforms": "linux/amd64,linux/arm64",
+    "paths": [
+      "images/n8n-python/**"
+    ]
+  },
+  {
+    "name": "caddy-tencentcloud",
+    "context": "images/caddy-tencentcloud",
+    "dockerfile": "Dockerfile",
+    "image": "pptag/caddy-tencentcloud",
+    "base_image": "caddy:alpine",
+    "digest_file": ".digests/caddy-tencentcloud",
+    "platforms": "linux/amd64,linux/arm64",
+    "paths": [
+      "images/caddy-tencentcloud/**"
+    ]
+  },
+  {
+    "name": "whistle",
+    "context": "images/whistle",
+    "dockerfile": "Dockerfile",
+    "image": "pptag/whistle",
+    "base_image": "node:20-alpine",
+    "npm_package": "whistle",
+    "digest_file": ".digests/whistle",
+    "platforms": "linux/amd64,linux/arm64",
+    "paths": [
+      "images/whistle/**"
+    ]
+  }
+]

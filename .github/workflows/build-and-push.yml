@@ -1,5 +1,5 @@
-# 自动检查 n8n 官方镜像更新并构建推送
-name: Build and Push n8n-python Docker Image
+# 自动检查基础镜像更新并构建推送多个 Docker 镜像
+name: Build and Push Docker Images
 
 on:
   schedule:
@@ -9,27 +9,54 @@ on:
     branches:
       - main
     paths:
-      # 当这些文件变更时触发构建
-      - 'Dockerfile'
-      - 'node-packages.txt'
-  workflow_dispatch:  # 允许手动触发
+      - 'images/**'
+  workflow_dispatch:
     inputs:
       force_build:
         description: 'Force build even if no updates'
         required: false
         default: 'false'
         type: boolean
-
-env:
-  DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/n8n-python
-  N8N_OFFICIAL_IMAGE: docker.n8n.io/n8nio/n8n
+      image_filter:
+        description: 'Only build specific image (leave empty for all)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
-  check-and-build:
+  # 准备构建矩阵
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set build matrix
+        id: set-matrix
+        run: |
+          # 读取镜像配置
+          IMAGES=$(cat images/images.json)
+          
+          # 如果指定了特定镜像，则过滤
+          FILTER="${{ github.event.inputs.image_filter }}"
+          if [ -n "$FILTER" ]; then
+            IMAGES=$(echo "$IMAGES" | jq --arg filter "$FILTER" '[.[] | select(.name == $filter)]')
+          fi
+          
+          echo "matrix=$(echo $IMAGES | jq -c '{"include": .}')" >> $GITHUB_OUTPUT
+
+  # 构建各个镜像
+  build:
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
@@ -44,46 +71,78 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get n8n official image digest
-        id: n8n-digest
+      - name: Get base image digest
+        id: base-digest
         run: |
-          # 获取官方 n8n 镜像的最新 digest
-          DIGEST=$(docker manifest inspect ${{ env.N8N_OFFICIAL_IMAGE }}:latest 2>/dev/null | jq -r '.manifests[0].digest // .config.digest' || echo "")
+          BASE_IMAGE="${{ matrix.base_image }}"
+          NPM_PACKAGE="${{ matrix.npm_package }}"
+          echo "Checking base image: $BASE_IMAGE"
+          
+          # 获取基础镜像的最新 digest
+          DIGEST=$(docker manifest inspect $BASE_IMAGE 2>/dev/null | jq -r '.manifests[0].digest // .config.digest' || echo "")
           
           if [ -z "$DIGEST" ]; then
-            # 备用方法：拉取镜像获取 digest
-            docker pull ${{ env.N8N_OFFICIAL_IMAGE }}:latest
-            DIGEST=$(docker inspect ${{ env.N8N_OFFICIAL_IMAGE }}:latest --format='{{.Id}}')
+            docker pull $BASE_IMAGE
+            DIGEST=$(docker inspect $BASE_IMAGE --format='{{.Id}}')
+          fi
+          
+          # 如果配置了 npm_package，将 npm 包版本也加入 digest
+          if [ -n "$NPM_PACKAGE" ]; then
+            NPM_VERSION=$(npm view "$NPM_PACKAGE" version 2>/dev/null || echo "unknown")
+            DIGEST="${DIGEST}:npm-${NPM_PACKAGE}-${NPM_VERSION}"
+            echo "NPM package $NPM_PACKAGE version: $NPM_VERSION"
           fi
           
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "Current n8n digest: $DIGEST"
+          echo "Current combined digest: $DIGEST"
 
-      - name: Get n8n version and timestamp
-        id: n8n-version
+      - name: Get version info
+        id: version-info
         run: |
-          # 获取 n8n 版本号
-          docker pull ${{ env.N8N_OFFICIAL_IMAGE }}:latest
-          VERSION=$(docker run --rm ${{ env.N8N_OFFICIAL_IMAGE }}:latest n8n --version 2>/dev/null || echo "unknown")
-          # 生成时间戳 YYYYMMDDHHmm
+          BASE_IMAGE="${{ matrix.base_image }}"
+          IMAGE_NAME="${{ matrix.name }}"
+          
+          # 拉取基础镜像
+          docker pull $BASE_IMAGE
+          
+          # 根据不同镜像类型获取版本
+          case "$IMAGE_NAME" in
+            "n8n-python")
+              VERSION=$(docker run --rm $BASE_IMAGE n8n --version 2>/dev/null || echo "unknown")
+              ;;
+            "caddy-tencentcloud")
+              VERSION=$(docker run --rm $BASE_IMAGE caddy version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
+              ;;
+            "whistle")
+              VERSION=$(npm view whistle version 2>/dev/null || echo "unknown")
+              ;;
+            *)
+              VERSION="unknown"
+              ;;
+          esac
+          
+          # 清理版本号中的特殊字符
+          VERSION=$(echo "$VERSION" | tr -d '\n\r' | sed 's/[^a-zA-Z0-9._-]//g')
+          
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           VERSION_WITH_TS="${VERSION}-${TIMESTAMP}"
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "version_with_ts=$VERSION_WITH_TS" >> $GITHUB_OUTPUT
           echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "n8n version: $VERSION"
-          echo "version with timestamp: $VERSION_WITH_TS"
+          echo "Version: $VERSION, with timestamp: $VERSION_WITH_TS"
 
       - name: Check if update needed
         id: check-update
         run: |
-          # 读取上次构建的 digest
+          DIGEST_FILE="${{ matrix.digest_file }}"
           LAST_DIGEST=""
-          if [ -f ".last-n8n-digest" ]; then
-            LAST_DIGEST=$(cat .last-n8n-digest)
+          
+          if [ -f "$DIGEST_FILE" ]; then
+            LAST_DIGEST=$(cat "$DIGEST_FILE")
           fi
           
-          CURRENT_DIGEST="${{ steps.n8n-digest.outputs.digest }}"
+          CURRENT_DIGEST="${{ steps.base-digest.outputs.digest }}"
           FORCE_BUILD="${{ github.event.inputs.force_build }}"
           EVENT_NAME="${{ github.event_name }}"
           
@@ -92,41 +151,58 @@ jobs:
           echo "Force build: $FORCE_BUILD"
           echo "Event name: $EVENT_NAME"
           
-          # 如果是 push 事件（配置文件变更触发），强制构建
+          # 检查是否有相关文件变更
+          PATHS='${{ toJson(matrix.paths) }}'
+          FILE_CHANGED="false"
+          
           if [ "$EVENT_NAME" = "push" ]; then
+            # 获取变更的文件
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+            echo "Changed files: $CHANGED_FILES"
+            
+            for pattern in $(echo "$PATHS" | jq -r '.[]'); do
+              # 将通配符模式转换为正则
+              regex=$(echo "$pattern" | sed 's/\*\*/.*/' | sed 's/\*/[^\/]*/')
+              if echo "$CHANGED_FILES" | grep -qE "$regex"; then
+                FILE_CHANGED="true"
+                echo "File change detected matching pattern: $pattern"
+                break
+              fi
+            done
+          fi
+          
+          if [ "$FILE_CHANGED" = "true" ] || [ "$FORCE_BUILD" = "true" ] || [ "$LAST_DIGEST" != "$CURRENT_DIGEST" ]; then
             echo "needs_build=true" >> $GITHUB_OUTPUT
-            echo "Build needed due to config file changes!"
-          elif [ "$FORCE_BUILD" = "true" ] || [ "$LAST_DIGEST" != "$CURRENT_DIGEST" ]; then
-            echo "needs_build=true" >> $GITHUB_OUTPUT
-            echo "Build needed!"
+            echo "Build needed for ${{ matrix.name }}!"
           else
             echo "needs_build=false" >> $GITHUB_OUTPUT
-            echo "No build needed, image is up to date."
+            echo "No build needed for ${{ matrix.name }}, image is up to date."
           fi
 
       - name: Build and push Docker image
         if: steps.check-update.outputs.needs_build == 'true'
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
           push: true
           tags: |
-            ${{ env.DOCKER_IMAGE_NAME }}:latest
-            ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version_with_ts }}
-          platforms: linux/amd64,linux/arm64
+            ${{ matrix.image }}:latest
+            ${{ matrix.image }}:${{ steps.version-info.outputs.version_with_ts }}
+          platforms: ${{ matrix.platforms }}
           no-cache: true
 
       - name: Update digest file
         if: steps.check-update.outputs.needs_build == 'true'
         run: |
-          echo "${{ steps.n8n-digest.outputs.digest }}" > .last-n8n-digest
+          echo "${{ steps.base-digest.outputs.digest }}" > ${{ matrix.digest_file }}
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add .last-n8n-digest
-          git commit -m "chore: update n8n digest to ${{ steps.n8n-version.outputs.version_with_ts }} [skip ci]" || echo "No changes to commit"
+          git add ${{ matrix.digest_file }}
+          git commit -m "chore: update ${{ matrix.name }} digest to ${{ steps.version-info.outputs.version_with_ts }} [skip ci]" || echo "No changes to commit"
+          git pull --rebase || true
           git push || echo "Nothing to push"
 
       - name: Create release tag
@@ -134,12 +210,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const version = '${{ steps.n8n-version.outputs.version }}';
-            const versionWithTs = '${{ steps.n8n-version.outputs.version_with_ts }}';
-            const tagName = `v${versionWithTs}`;
+            const imageName = '${{ matrix.name }}';
+            const version = '${{ steps.version-info.outputs.version }}';
+            const versionWithTs = '${{ steps.version-info.outputs.version_with_ts }}';
+            const tagName = `${imageName}-v${versionWithTs}`;
             
             try {
-              // 检查 tag 是否已存在
               await github.rest.git.getRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -148,7 +224,6 @@ jobs:
               console.log(`Tag ${tagName} already exists, skipping...`);
             } catch (e) {
               if (e.status === 404) {
-                // 创建新 tag
                 await github.rest.git.createRef({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -157,13 +232,12 @@ jobs:
                 });
                 console.log(`Created tag ${tagName}`);
                 
-                // 创建 release
                 await github.rest.repos.createRelease({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   tag_name: tagName,
-                  name: `n8n-python ${tagName}`,
-                  body: `Automated build based on n8n ${version}\n\n- n8n version: ${version}\n- Build tag: ${versionWithTs}\n- Python 3.x included\n- pip included\n- uv package manager included`,
+                  name: `${imageName} ${tagName}`,
+                  body: `Automated build for ${imageName}\n\n- Base version: ${version}\n- Build tag: ${versionWithTs}`,
                   draft: false,
                   prerelease: false
                 });
@@ -175,12 +249,13 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Summary - ${{ matrix.name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **n8n Version**: ${{ steps.n8n-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Tag**: ${{ steps.n8n-version.outputs.version_with_ts }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${{ matrix.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Image**: ${{ matrix.base_image }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version-info.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Tag**: ${{ steps.version-info.outputs.version_with_ts }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build Needed**: ${{ steps.check-update.outputs.needs_build }}" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.check-update.outputs.needs_build }}" = "true" ]; then
-            echo "- **Image Pushed**: ${{ env.DOCKER_IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-            echo "- **Version Tag**: ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version_with_ts }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image Pushed**: ${{ matrix.image }}:latest" >> $GITHUB_STEP_SUMMARY
           fi

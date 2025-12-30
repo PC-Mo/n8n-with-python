@@ -20,3 +20,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Build artifacts
+.digests/
+images/images.json
