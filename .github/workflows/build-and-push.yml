@@ -59,14 +59,20 @@ jobs:
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
           echo "Current n8n digest: $DIGEST"
 
-      - name: Get n8n version
+      - name: Get n8n version and timestamp
         id: n8n-version
         run: |
           # 获取 n8n 版本号
           docker pull ${{ env.N8N_OFFICIAL_IMAGE }}:latest
           VERSION=$(docker run --rm ${{ env.N8N_OFFICIAL_IMAGE }}:latest n8n --version 2>/dev/null || echo "unknown")
+          # 生成时间戳 YYYYMMDDHHmm
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M")
+          VERSION_WITH_TS="${VERSION}-${TIMESTAMP}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_with_ts=$VERSION_WITH_TS" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
           echo "n8n version: $VERSION"
+          echo "version with timestamp: $VERSION_WITH_TS"
 
       - name: Check if update needed
         id: check-update
@@ -107,7 +113,7 @@ jobs:
           push: true
           tags: |
             ${{ env.DOCKER_IMAGE_NAME }}:latest
-            ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version }}
+            ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version_with_ts }}
           platforms: linux/amd64,linux/arm64
           no-cache: true
 
@@ -120,7 +126,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add .last-n8n-digest
-          git commit -m "chore: update n8n digest to ${{ steps.n8n-version.outputs.version }} [skip ci]" || echo "No changes to commit"
+          git commit -m "chore: update n8n digest to ${{ steps.n8n-version.outputs.version_with_ts }} [skip ci]" || echo "No changes to commit"
           git push || echo "Nothing to push"
 
       - name: Create release tag
@@ -129,7 +135,8 @@ jobs:
         with:
           script: |
             const version = '${{ steps.n8n-version.outputs.version }}';
-            const tagName = `v${version}`;
+            const versionWithTs = '${{ steps.n8n-version.outputs.version_with_ts }}';
+            const tagName = `v${versionWithTs}`;
             
             try {
               // 检查 tag 是否已存在
@@ -156,7 +163,7 @@ jobs:
                   repo: context.repo.repo,
                   tag_name: tagName,
                   name: `n8n-python ${tagName}`,
-                  body: `Automated build based on n8n ${version}\n\n- n8n version: ${version}\n- Python 3.x included\n- pip included\n- uv package manager included`,
+                  body: `Automated build based on n8n ${version}\n\n- n8n version: ${version}\n- Build tag: ${versionWithTs}\n- Python 3.x included\n- pip included\n- uv package manager included`,
                   draft: false,
                   prerelease: false
                 });
@@ -171,8 +178,9 @@ jobs:
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **n8n Version**: ${{ steps.n8n-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Tag**: ${{ steps.n8n-version.outputs.version_with_ts }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build Needed**: ${{ steps.check-update.outputs.needs_build }}" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.check-update.outputs.needs_build }}" = "true" ]; then
             echo "- **Image Pushed**: ${{ env.DOCKER_IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-            echo "- **Version Tag**: ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Version Tag**: ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.n8n-version.outputs.version_with_ts }}" >> $GITHUB_STEP_SUMMARY
           fi
