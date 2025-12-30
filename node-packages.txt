@@ -5,6 +5,5 @@
 # 示例:
 # lodash
 # axios@1.6.0
-# moment
 
 tencentcloud-sdk-nodejs-ssl
