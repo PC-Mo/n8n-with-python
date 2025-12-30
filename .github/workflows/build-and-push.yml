@@ -5,6 +5,13 @@ on:
   schedule:
     # 每天 UTC 时间 02:00 检查更新
     - cron: '0 2 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      # 当这些文件变更时触发构建
+      - 'Dockerfile'
+      - 'node-packages.txt'
   workflow_dispatch:  # 允许手动触发
     inputs:
       force_build:
@@ -72,12 +79,18 @@ jobs:
           
           CURRENT_DIGEST="${{ steps.n8n-digest.outputs.digest }}"
           FORCE_BUILD="${{ github.event.inputs.force_build }}"
+          EVENT_NAME="${{ github.event_name }}"
           
           echo "Last digest: $LAST_DIGEST"
           echo "Current digest: $CURRENT_DIGEST"
           echo "Force build: $FORCE_BUILD"
+          echo "Event name: $EVENT_NAME"
           
-          if [ "$FORCE_BUILD" = "true" ] || [ "$LAST_DIGEST" != "$CURRENT_DIGEST" ]; then
+          # 如果是 push 事件（配置文件变更触发），强制构建
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+            echo "Build needed due to config file changes!"
+          elif [ "$FORCE_BUILD" = "true" ] || [ "$LAST_DIGEST" != "$CURRENT_DIGEST" ]; then
             echo "needs_build=true" >> $GITHUB_OUTPUT
             echo "Build needed!"
           else
